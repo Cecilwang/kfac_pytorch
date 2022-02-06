@@ -6,18 +6,20 @@ from tqdm import tqdm
 sys.path.append('..')
 from utils import Metric, accuracy
 
+import wandb
+
 def train(epoch,
           model,
-          optimizer, 
-          preconditioner, 
-          loss_func, 
-          train_sampler, 
-          train_loader, 
+          optimizer,
+          preconditioner,
+          loss_func,
+          train_sampler,
+          train_loader,
           args):
 
     model.train()
     train_sampler.set_epoch(epoch)
-    train_loss = Metric('train_loss') 
+    train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
     scaler = args.grad_scaler if 'grad_scaler' in args else None
 
@@ -42,7 +44,7 @@ def train(epoch,
                 else:
                     output = model(data_batch)
                     loss = loss_func(output, target_batch)
-                
+
                 loss = loss / args.batches_per_allreduce
 
                 with torch.no_grad():
@@ -91,12 +93,23 @@ def train(epoch,
         args.log_writer.add_scalar('train/accuracy', train_accuracy.avg, epoch)
         args.log_writer.add_scalar('train/lr', optimizer.param_groups[0]['lr'],
                                     epoch)
+    if args.verbose:
+        wandb.log(
+            {
+                'train/loss': train_loss.avg,
+                'train/accuracy': train_accuracy.avg,
+                'train/lr': optimizer.param_groups[0]['lr'],
+                'factor_update_freq': preconditioner.param_groups[0]['factor_update_freq'],
+                'inv_update_freq': preconditioner.param_groups[0]['inv_update_freq'],
+                'damping_update_freq': preconditioner.param_groups[0]['damping_update_freq'],
+            },
+            step=epoch)
 
 
-def test(epoch, 
-         model, 
-         loss_func, 
-         val_loader, 
+def test(epoch,
+         model,
+         loss_func,
+         val_loader,
          args):
     model.eval()
     val_loss = Metric('val_loss')
@@ -123,3 +136,10 @@ def test(epoch,
     if args.log_writer is not None:
         args.log_writer.add_scalar('val/loss', val_loss.avg, epoch)
         args.log_writer.add_scalar('val/accuracy', val_accuracy.avg, epoch)
+    if args.verbose:
+        wandb.log(
+            {
+                'val/loss': val_loss.avg,
+                'val/accuracy': val_accuracy.avg,
+            },
+            step=epoch)

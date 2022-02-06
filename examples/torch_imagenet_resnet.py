@@ -16,6 +16,8 @@ import cnn_utils.optimizers as optimizers
 from torch.utils.tensorboard import SummaryWriter
 from utils import LabelSmoothLoss, save_checkpoint
 
+import wandb
+
 try:
     from torch.cuda.amp import autocast, GradScaler
     TORCH_FP16 = True
@@ -31,7 +33,7 @@ def parse_args():
     parser.add_argument('--train-dir', default='/tmp/imagenet/ILSVRC2012_img_train/',
                         help='path to training data')
     parser.add_argument('--val-dir', default='/tmp/imagenet/ILSVRC2012_img_val/',
-                        help='path to validation data')    
+                        help='path to validation data')
     parser.add_argument('--log-dir', default='./logs/torch_imagenet',
                         help='TensorBoard/checkpoint log directory')
     parser.add_argument('--checkpoint-format', default='checkpoint_{epoch}.pth.tar',
@@ -114,14 +116,14 @@ def parse_args():
 
     return args
 
-if __name__ == '__main__': 
+if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn')
     args = parse_args()
 
     torch.distributed.init_process_group(backend=args.backend, init_method='env://')
     torch.distributed.barrier()
     kfac.comm.init_comm_backend()
-    
+
     if args.cuda:
         torch.cuda.set_device(args.local_rank)
         torch.cuda.manual_seed(args.seed)
@@ -136,6 +138,9 @@ if __name__ == '__main__':
     args.base_lr = args.base_lr * dist.get_world_size() * args.batches_per_allreduce
     args.verbose = True if dist.get_rank() == 0 else False
     args.horovod = False
+
+    if args.verbose:
+        wandb.init(project="pytorch-image-models")
 
     train_sampler, train_loader, _, val_loader = datasets.get_imagenet(args)
     if args.model.lower() == 'resnet50':
@@ -194,18 +199,17 @@ if __name__ == '__main__':
     start = time.time()
 
     for epoch in range(args.resume_from_epoch + 1, args.epochs + 1):
-        engine.train(epoch, model, optimizer, preconditioner, loss_func, 
+        engine.train(epoch, model, optimizer, preconditioner, loss_func,
                      train_sampler, train_loader, args)
         engine.test(epoch, model, loss_func, val_loader, args)
         for scheduler in lr_schedules:
             scheduler.step()
-        if (epoch > 0 and epoch % args.checkpoint_freq == 0 and
-                dist.get_rank() == 0):
-            # Note: save model.module b/c model may be Distributed wrapper so saving
-            # the underlying model is more generic
-            save_checkpoint(model.module, optimizer, preconditioner, lr_schedules,
-                            args.checkpoint_format.format(epoch=epoch))
+        #if (epoch > 0 and epoch % args.checkpoint_freq == 0 and
+        #        dist.get_rank() == 0):
+        #    # Note: save model.module b/c model may be Distributed wrapper so saving
+        #    # the underlying model is more generic
+        #    save_checkpoint(model.module, optimizer, preconditioner, lr_schedules,
+        #                    args.checkpoint_format.format(epoch=epoch))
 
     if args.verbose:
         print('\nTraining time: {}'.format(datetime.timedelta(seconds=time.time() - start)))
-
